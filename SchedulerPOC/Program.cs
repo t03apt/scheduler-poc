@@ -9,23 +9,32 @@ namespace SchedulerPOC
     class Program
     {
         private static object lockObj = new object();
+        private static Dictionary<int, (DateTimeOffset scheduledAt, object args)> states = 
+            new Dictionary<int, (DateTimeOffset scheduledAt, object args)>();
 
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
-            int entityId = 0;
-            TriggerJob(entityId);
+            TriggerJob(0);
+            TriggerJob(1);
+            TriggerJob(0);
+            TriggerJob(1);
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            TriggerJob(0);
+            TriggerJob(1);
+            TriggerJob(0);
+            TriggerJob(1);
+            await Task.Delay(TimeSpan.FromSeconds(2));
         }
 
         private static void TriggerJob(int entityId)
         {
-            var states = new Dictionary<int, (DateTimeOffset scheduledAt, object args)>();
 
             Monitor.Enter(lockObj);
             try
             {
                 if (!states.TryGetValue(entityId, out var state))
                 {
-                    var delay = TimeSpan.FromMinutes(1);
+                    var delay = TimeSpan.FromSeconds(2);
                     var scheduledAt = DateTimeOffset.UtcNow.Add(delay);
                     states.Add(entityId, (scheduledAt, new object()));
                     Task.Run(async () =>
@@ -34,7 +43,7 @@ namespace SchedulerPOC
                         Monitor.Enter(lockObj);
                         try
                         {
-                            await DoJob();
+                            await DoJob(entityId);
                             states.Remove(entityId);
                         }
                         finally
@@ -51,9 +60,10 @@ namespace SchedulerPOC
 
         }
 
-        private static Task DoJob()
+        private static Task DoJob(int entityId)
         {
-            throw new NotImplementedException();
+            Console.WriteLine(entityId);
+            return Task.CompletedTask;
         }
     }
 }
