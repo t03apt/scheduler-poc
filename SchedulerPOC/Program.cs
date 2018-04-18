@@ -1,68 +1,30 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace SchedulerPOC
 {
     class Program
     {
-        private static object lockObj = new object();
-        private static Dictionary<int, (DateTimeOffset scheduledAt, object args)> states = 
-            new Dictionary<int, (DateTimeOffset scheduledAt, object args)>();
-
         static async Task Main(string[] args)
         {
-            TriggerJob(0);
-            TriggerJob(1);
-            TriggerJob(0);
-            TriggerJob(1);
-            await Task.Delay(TimeSpan.FromSeconds(2));
-            TriggerJob(0);
-            TriggerJob(1);
-            TriggerJob(0);
-            TriggerJob(1);
-            await Task.Delay(TimeSpan.FromSeconds(2));
-        }
+            var samples = new[] { new Sample1() };
 
-        private static void TriggerJob(int entityId)
-        {
-            Monitor.Enter(lockObj);
-            try
+            foreach (var sample in samples)
             {
-                if (!states.TryGetValue(entityId, out var state))
-                {
-                    var delay = TimeSpan.FromSeconds(2);
-                    var scheduledAt = DateTimeOffset.UtcNow.Add(delay);
-                    states.Add(entityId, (scheduledAt, new object()));
-                    Task.Run(async () =>
-                    {
-                        await Task.Delay(delay);
-                        Monitor.Enter(lockObj);
-                        try
-                        {
-                            await DoJob(entityId);
-                            states.Remove(entityId);
-                        }
-                        finally
-                        {
-                            Monitor.Exit(lockObj);
-                        }
-                    });
-                }
+                Console.WriteLine($"--- Begin: {sample.GetType().Name} ---");
+                sample.TriggerJob(0);
+                sample.TriggerJob(1);
+                sample.TriggerJob(0);
+                sample.TriggerJob(1);
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                sample.TriggerJob(0);
+                sample.TriggerJob(1);
+                sample.TriggerJob(0);
+                sample.TriggerJob(1);
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                Console.WriteLine($"--- End: {sample.GetType().Name} ---");
             }
-            finally
-            {
-                Monitor.Exit(lockObj);
-            }
-
-        }
-
-        private static Task DoJob(int entityId)
-        {
-            Console.WriteLine(entityId);
-            return Task.CompletedTask;
         }
     }
 }
