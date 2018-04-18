@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,17 +8,21 @@ using Serilog;
 namespace SchedulerPOC
 {
     /// <summary>
-    /// Logically correct implementation, but very poor performance
+    /// Logically correct implementation, but poor performance
     /// </summary>
-    class Sample1 : IScheduler
+    class Sample2 : IScheduler
     {
-        private object lockObj = new object();
-        private Dictionary<int, WorkArgs> states =
-            new Dictionary<int, WorkArgs>();
+        private Dictionary<int, WorkArgs> states = new Dictionary<int, WorkArgs>();
+        private ConcurrentDictionary<int, object> lockDict = new ConcurrentDictionary<int, object>();
+
+        public object GetLock(int entityId)
+        {
+            return lockDict.GetOrAdd(entityId, s => new object());
+        }
 
         public void TriggerWork(int entityId)
         {
-            Monitor.Enter(lockObj);
+            Monitor.Enter(GetLock(entityId));
             try
             {
                 if (!states.TryGetValue(entityId, out var state))
@@ -28,7 +33,7 @@ namespace SchedulerPOC
                     Task.Run(async () =>
                     {
                         await Task.Delay(delay).ConfigureAwait(false);
-                        Monitor.Enter(lockObj);
+                        Monitor.Enter(GetLock(entityId));
                         try
                         {
                             await DoWork(entityId).ConfigureAwait(false);
@@ -36,14 +41,14 @@ namespace SchedulerPOC
                         }
                         finally
                         {
-                            Monitor.Exit(lockObj);
+                            Monitor.Exit(GetLock(entityId));
                         }
                     });
                 }
             }
             finally
             {
-                Monitor.Exit(lockObj);
+                Monitor.Exit(GetLock(entityId));
             }
         }
 

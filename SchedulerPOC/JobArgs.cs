@@ -2,14 +2,16 @@
 
 namespace SchedulerPOC
 {
-    class JobArgs
+    class WorkArgs
     {
-        public JobArgs(DateTimeOffset scheduledAt)
+        public WorkArgs(DateTimeOffset? scheduledAt, Guid? triggerId = null)
         {
-            this.ScheduledAt = scheduledAt;
+            ScheduledAt = scheduledAt;
+            TriggerId = triggerId ?? Guid.NewGuid();
         }
 
-        public DateTimeOffset ScheduledAt { get; set; }
-        public object Args { get; set; }
+        public DateTimeOffset? ScheduledAt { get; }
+        public Guid TriggerId { get; }
+        public object Args { get; }
     }
 }

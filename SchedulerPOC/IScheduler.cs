@@ -4,8 +4,8 @@ namespace SchedulerPOC
 {
     interface IScheduler
     {
-        void TriggerJob(int entityId);
+        void TriggerWork(int entityId);
 
-        Task DoJob(int entityId);
+        Task DoWork(int entityId);
     }
 }
