@@ -39,7 +39,7 @@ namespace SchedulerPOC
                         }
                         finally
                         {
-
+                            Monitor.Exit(lockObj);
                         }
                     });
                 }
