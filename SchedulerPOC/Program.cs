@@ -28,7 +28,6 @@ namespace SchedulerPOC
 
         private static void TriggerJob(int entityId)
         {
-
             Monitor.Enter(lockObj);
             try
             {
