@@ -15,7 +15,7 @@ namespace SchedulerPOC
                     outputTemplate: "{Timestamp:mm:ss.fff} [{Level}] ({ThreadId}) {Message}{NewLine}{Exception}")
                 .CreateLogger();
 
-            var samples = new IScheduler[] { new Sample1(), new Sample2(), new Sample3() };
+            var samples = new IScheduler[] { new Sample3() };
 
             foreach (var sample in samples)
             {
@@ -28,12 +28,16 @@ namespace SchedulerPOC
 
         private static async Task TriggerWork(IScheduler sample)
         {
+            var jobId = Guid.NewGuid();
+            var parentId1 = Guid.NewGuid();
+            var parentId2 = Guid.NewGuid();
+
             var started = DateTimeOffset.UtcNow;
             while (DateTimeOffset.UtcNow - started < TimeSpan.FromSeconds(2))
             {
                 await Task.Delay(10);
-                sample.TriggerWork(0);
-                sample.TriggerWork(1);
+                sample.AddAsync(jobId, parentId1);
+                sample.AddAsync(jobId, parentId2);
             }
         }
     }

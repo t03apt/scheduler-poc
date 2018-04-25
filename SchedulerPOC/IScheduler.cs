@@ -1,11 +1,11 @@
-﻿using System.Threading.Tasks;
+﻿using System;
+using System.Threading.Tasks;
 
 namespace SchedulerPOC
 {
     interface IScheduler
     {
-        void TriggerWork(int entityId);
-
-        Task DoWork(int entityId);
+        void AddAsync(Guid jobId, Guid parentId);
+        Task DoWork(Guid jobId, Guid targetId);
     }
 }
