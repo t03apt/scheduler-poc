@@ -13,83 +13,63 @@ namespace SchedulerPOC
     class Sample3 : IScheduler
     {
         private readonly ConcurrentDictionary<Guid, ChangeState> _states = new ConcurrentDictionary<Guid, ChangeState>();
-        private static readonly TimeSpan DefaultRollupDelay = TimeSpan.FromSeconds(0.5);
+        private static readonly TimeSpan DefaultRollupDelay = TimeSpan.FromSeconds(1);
         private const int RollupCalculationThreshold = 10;
 
         public void AddAsync(Guid jobId, Guid parentId)
         {
-            var newChangeStateId = Guid.NewGuid();
+            var newScheduleId = Guid.NewGuid();
 
             var isNewScheduleNeeded = false;
             var state = _states.AddOrUpdate(parentId,
-                (key) =>
+                key =>
                 {
                     isNewScheduleNeeded = true;
-                    return new ChangeState(jobId, parentId, DateTimeOffset.UtcNow.Add(DefaultRollupDelay), 1, new CancellationTokenSource(), newChangeStateId);
+                    return new ChangeState(jobId, parentId, DateTimeOffset.UtcNow.Add(DefaultRollupDelay), 1, new CancellationTokenSource(), newScheduleId);
                 },
                 (key, existingValue) =>
                 {
                     ChangeState newChangeState;
+                    var observerd = existingValue.Observed + 1;
+                    var isObserverdThresholdReached = observerd >= RollupCalculationThreshold;
+                    isNewScheduleNeeded = isObserverdThresholdReached ||
+                                          existingValue.TriggerDateTime < DateTimeOffset.UtcNow;
 
-                    if (existingValue.TriggerDateTime < DateTimeOffset.UtcNow)
+                    if (isNewScheduleNeeded)
                     {
-                        //// 1) we have a task scheduled already
-                        //return new ChangeState(existingValue.JobId, existingValue.ParentId, existingValue.TriggerDateTime, existingValue.Observed + 1, existingValue.CancellationTokenSourceOfPreviousRollup);
-
-                        // 2) a previous task is running - we should trigger a new one
-                        // 3) a previous task is failed for some reason
-                        isNewScheduleNeeded = true;
                         existingValue.CancellationTokenSourceOfPreviousRollup.Cancel();
+                        var triggerDateTime = isObserverdThresholdReached ? DateTimeOffset.UtcNow : DateTimeOffset.UtcNow.Add(DefaultRollupDelay);
                         newChangeState = new ChangeState(
-                            existingValue.JobId, 
-                            existingValue.ParentId, 
-                            DateTimeOffset.UtcNow.Add(DefaultRollupDelay), 
-                            existingValue.Observed + 1, // or 1
-                            new CancellationTokenSource(), 
-                            newChangeStateId);
+                            existingValue.JobId,
+                            existingValue.ParentId,
+                            triggerDateTime,
+                            1,
+                            new CancellationTokenSource(),
+                            newScheduleId);
                     }
                     else
                     {
-                        // 1) rollup is scheduled already, not running, but observed needs to be incremented
-                        var observerd = existingValue.Observed + 1;
-                        DateTimeOffset triggerDateTime;
-                        CancellationTokenSource newCancellationTokenSource;
-
-                        if (observerd >= RollupCalculationThreshold)
-                        {
-                            existingValue.CancellationTokenSourceOfPreviousRollup.Cancel();
-                            triggerDateTime = DateTimeOffset.UtcNow.AddSeconds(1);
-                            newCancellationTokenSource = new CancellationTokenSource();
-                            isNewScheduleNeeded = true;
-                        }
-                        else
-                        {
-                            newCancellationTokenSource = existingValue.CancellationTokenSourceOfPreviousRollup;
-                            triggerDateTime = existingValue.TriggerDateTime;
-                            isNewScheduleNeeded = false;
-                        }
-
                         newChangeState = new ChangeState(
-                            existingValue.JobId, 
+                            existingValue.JobId,
                             existingValue.ParentId,
-                            triggerDateTime, 
+                            existingValue.TriggerDateTime,
                             observerd,
-                            newCancellationTokenSource,
-                            existingValue.ChangeStateId);
-
-
+                            existingValue.CancellationTokenSourceOfPreviousRollup,
+                            existingValue.ScheduleId);
                     }
+
+                    Log.Logger.Information("key:{@key} newScheduleNeeded:{@isNewScheduleNeeded} scheduleId:{@scheduleId}", newChangeState.ParentId.ToShort(), isNewScheduleNeeded, existingValue.ScheduleId.ToShort());
 
                     return newChangeState;
                 });
 
             if (isNewScheduleNeeded)
             {
-                ScheduleRollup(parentId, newChangeStateId, state.TriggerDateTime, state.CancellationTokenSourceOfPreviousRollup.Token);
+                ScheduleRollup(parentId, newScheduleId, state.TriggerDateTime, state.CancellationTokenSourceOfPreviousRollup.Token);
             }
         }
 
-        private void ScheduleRollup(Guid stateKey, Guid expectedChangeStateId, DateTimeOffset triggerDateTime, CancellationToken cancellationToken)
+        private void ScheduleRollup(Guid stateKey, Guid expectedScheduleId, DateTimeOffset triggerDateTime, CancellationToken cancellationToken)
         {
             Task.Run(async () =>
             {
@@ -104,20 +84,18 @@ namespace SchedulerPOC
                     {
                         // Log.Logger.Information("task cancelled");
                         // it is expected
+
+                        Log.Logger.Information("cancelled key:{@key} scheduleId:{@scheduleId}", stateKey.ToShort(), expectedScheduleId);
+                        return;
                     }
                 }
 
-                if (_states.TryGetValue(stateKey, out var state) && state.ChangeStateId == expectedChangeStateId)
+                if (_states.TryGetValue(stateKey, out var state) && state.ScheduleId == expectedScheduleId)
                 {
-                    await DoWork(state.JobId, state.ParentId).ConfigureAwait(false);
+                    await DoWork(state.JobId, state.ParentId, state.ScheduleId).ConfigureAwait(false);
                     _states.TryRemove(stateKey, state);
                 }
             }, cancellationToken);
-        }
-
-        private void ScheduleImmediateRollup(Guid stateKey, Guid expectedChangeStateId, CancellationToken cancellationToken)
-        {
-            ScheduleRollup(stateKey, expectedChangeStateId, DateTimeOffset.UtcNow.AddSeconds(1), cancellationToken);
         }
 
         private static TimeSpan? GetDelay(DateTimeOffset triggerDateTime)
@@ -126,10 +104,11 @@ namespace SchedulerPOC
             return (delay > TimeSpan.Zero) ? delay : (TimeSpan?)null;
         }
 
-        public Task DoWork(Guid jobId, Guid targetId)
+        public async Task DoWork(Guid jobId, Guid targetId, Guid scheduleId)
         {
-            Log.Information("{@jobId} {@targetId}", jobId, targetId);
-            return Task.CompletedTask;
+            Log.Information("updating key:{@targetId} scheduleId:{@scheduleId}...", targetId.ToShort(), scheduleId.ToShort());
+            await Task.Delay(TimeSpan.FromSeconds(0.1)).ConfigureAwait(false);
+            Log.Information("updated key:{@targetId} scheduleId:{@scheduleId}...", targetId.ToShort(), scheduleId.ToShort());
         }
     }
 

@@ -6,14 +6,14 @@ namespace SchedulerPOC
 {
     public class ChangeState
     {
-        public ChangeState(Guid jobId, Guid parentId, DateTimeOffset triggerDateTime, int observed, CancellationTokenSource cancellationTokenSourceOfPreviousRollup, Guid changeStateId)
+        public ChangeState(Guid jobId, Guid parentId, DateTimeOffset triggerDateTime, int observed, CancellationTokenSource cancellationTokenSourceOfPreviousRollup, Guid scheduleId)
         {
             JobId = jobId;
             ParentId = parentId;
             TriggerDateTime = triggerDateTime;
             Observed = observed;
             CancellationTokenSourceOfPreviousRollup = cancellationTokenSourceOfPreviousRollup;
-            ChangeStateId = changeStateId;
+            ScheduleId = scheduleId;
         }
 
         [JsonProperty("jobId")]
@@ -29,7 +29,7 @@ namespace SchedulerPOC
         public int Observed { get; private set; }
 
         [JsonIgnore]
-        public Guid ChangeStateId { get; private set; }
+        public Guid ScheduleId { get; private set; }
 
         [JsonIgnore]
         public CancellationTokenSource CancellationTokenSourceOfPreviousRollup { get; private set; }
