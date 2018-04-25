@@ -29,6 +29,8 @@ namespace SchedulerPOC
                 },
                 (key, existingValue) =>
                 {
+                    ChangeState newChangeState;
+
                     if (existingValue.TriggerDateTime < DateTimeOffset.UtcNow)
                     {
                         //// 1) we have a task scheduled already
@@ -38,7 +40,7 @@ namespace SchedulerPOC
                         // 3) a previous task is failed for some reason
                         isNewScheduleNeeded = true;
                         existingValue.CancellationTokenSourceOfPreviousRollup.Cancel();
-                        return new ChangeState(
+                        newChangeState = new ChangeState(
                             existingValue.JobId, 
                             existingValue.ParentId, 
                             DateTimeOffset.UtcNow.Add(DefaultRollupDelay), 
@@ -49,25 +51,37 @@ namespace SchedulerPOC
                     else
                     {
                         // 1) rollup is scheduled already, not running, but observed needs to be incremented
-                        isNewScheduleNeeded = false;
-                        return new ChangeState(
+                        var observerd = existingValue.Observed + 1;
+                        DateTimeOffset triggerDateTime;
+                        CancellationTokenSource newCancellationTokenSource;
+
+                        if (observerd >= RollupCalculationThreshold)
+                        {
+                            existingValue.CancellationTokenSourceOfPreviousRollup.Cancel();
+                            triggerDateTime = DateTimeOffset.UtcNow.AddSeconds(1);
+                            newCancellationTokenSource = new CancellationTokenSource();
+                            isNewScheduleNeeded = true;
+                        }
+                        else
+                        {
+                            newCancellationTokenSource = existingValue.CancellationTokenSourceOfPreviousRollup;
+                            triggerDateTime = existingValue.TriggerDateTime;
+                            isNewScheduleNeeded = false;
+                        }
+
+                        newChangeState = new ChangeState(
                             existingValue.JobId, 
                             existingValue.ParentId,
-                            existingValue.TriggerDateTime, 
-                            existingValue.Observed + 1,
-                            existingValue.CancellationTokenSourceOfPreviousRollup,
+                            triggerDateTime, 
+                            observerd,
+                            newCancellationTokenSource,
                             existingValue.ChangeStateId);
-                    }
-                });
 
-            if (state.Observed >= RollupCalculationThreshold)
-            {
-                // we trigger an immediate rollup
-                // we cancel the scheduled rollup
-                isNewScheduleNeeded = false;
-                state.CancellationTokenSourceOfPreviousRollup.Cancel();
-                ScheduleImmediateRollup(state.ParentId, newChangeStateId, state.CancellationTokenSourceOfPreviousRollup.Token);
-            }
+
+                    }
+
+                    return newChangeState;
+                });
 
             if (isNewScheduleNeeded)
             {
