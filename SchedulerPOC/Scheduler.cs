@@ -1,50 +1,51 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 
 namespace SchedulerPOC
 {
-    /// <summary>
-    /// Logically correct implementation, better performance
-    /// </summary>
-    class Sample3 : IScheduler
+    internal class Scheduler : IScheduler
     {
-        private readonly ConcurrentDictionary<Guid, ChangeState> _states = new ConcurrentDictionary<Guid, ChangeState>();
-        private static readonly TimeSpan DefaultRollupDelay = TimeSpan.FromSeconds(1);
         private const int RollupCalculationThreshold = 10;
+        private static readonly TimeSpan DefaultRollupDelay = TimeSpan.FromSeconds(1);
 
-        public void AddAsync(Guid jobId, Guid parentId)
+        private readonly ConcurrentDictionary<Guid, ChangeState> _states = new ConcurrentDictionary<Guid, ChangeState>();
+        private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+        private readonly Func<(Guid jobId, Guid targetId, Guid scheduleId), Task> _doWorkAsync;
+
+        public Scheduler(Func<(Guid jobId, Guid targetId, Guid scheduleId), Task> doWorkAsync)
+        {
+            _doWorkAsync = doWorkAsync ?? throw new ArgumentNullException(nameof(doWorkAsync));
+        }
+
+        public void AddAsync(Guid jobId, Guid parentId, int observed = 1)
         {
             var newScheduleId = Guid.NewGuid();
-
             var isNewScheduleNeeded = false;
             var state = _states.AddOrUpdate(parentId,
                 key =>
                 {
                     isNewScheduleNeeded = true;
-                    return new ChangeState(jobId, parentId, DateTimeOffset.UtcNow.Add(DefaultRollupDelay), 1, new CancellationTokenSource(), newScheduleId);
+                    return new ChangeState(jobId, parentId, ComputeTriggerDateTime(observed), observed, CreateCancellationTokenSource(), newScheduleId);
                 },
                 (key, existingValue) =>
                 {
                     ChangeState newChangeState;
-                    var observerd = existingValue.Observed + 1;
-                    var isObserverdThresholdReached = observerd >= RollupCalculationThreshold;
-                    isNewScheduleNeeded = isObserverdThresholdReached ||
+                    var newObserved = existingValue.Observed + observed;
+                    isNewScheduleNeeded = IsObserverdThresholdReached(newObserved) ||
                                           existingValue.TriggerDateTime < DateTimeOffset.UtcNow;
 
                     if (isNewScheduleNeeded)
                     {
                         existingValue.CancellationTokenSourceOfPreviousRollup.Cancel();
-                        var triggerDateTime = isObserverdThresholdReached ? DateTimeOffset.UtcNow : DateTimeOffset.UtcNow.Add(DefaultRollupDelay);
                         newChangeState = new ChangeState(
                             existingValue.JobId,
                             existingValue.ParentId,
-                            triggerDateTime,
+                            ComputeTriggerDateTime(newObserved),
                             1,
-                            new CancellationTokenSource(),
+                            CreateCancellationTokenSource(),
                             newScheduleId);
                     }
                     else
@@ -53,7 +54,7 @@ namespace SchedulerPOC
                             existingValue.JobId,
                             existingValue.ParentId,
                             existingValue.TriggerDateTime,
-                            observerd,
+                            newObserved,
                             existingValue.CancellationTokenSourceOfPreviousRollup,
                             existingValue.ScheduleId);
                     }
@@ -69,6 +70,33 @@ namespace SchedulerPOC
             }
         }
 
+        public void Shutdown()
+        {
+            _cancellationTokenSource.Cancel();
+        }
+
+        private static DateTimeOffset ComputeTriggerDateTime(int observed)
+        {
+            return IsObserverdThresholdReached(observed) ? DateTimeOffset.UtcNow : DateTimeOffset.UtcNow.Add(DefaultRollupDelay);
+        }
+
+        private static bool IsObserverdThresholdReached(int observed)
+        {
+            var isObserverdThresholdReached = observed >= RollupCalculationThreshold;
+            return isObserverdThresholdReached;
+        }
+
+        private CancellationTokenSource CreateCancellationTokenSource()
+        {
+            return CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token);
+        }
+
+        private static TimeSpan? GetDelay(DateTimeOffset triggerDateTime)
+        {
+            var delay = triggerDateTime - DateTimeOffset.UtcNow;
+            return (delay > TimeSpan.Zero) ? delay : (TimeSpan?)null;
+        }
+
         private void ScheduleRollup(Guid stateKey, Guid expectedScheduleId, DateTimeOffset triggerDateTime, CancellationToken cancellationToken)
         {
             Task.Run(async () =>
@@ -80,7 +108,7 @@ namespace SchedulerPOC
                     {
                         await Task.Delay(delay.Value, cancellationToken).ConfigureAwait(false);
                     }
-                    catch (TaskCanceledException e)
+                    catch (TaskCanceledException)
                     {
                         // Log.Logger.Information("task cancelled");
                         // it is expected
@@ -92,35 +120,10 @@ namespace SchedulerPOC
 
                 if (_states.TryGetValue(stateKey, out var state) && state.ScheduleId == expectedScheduleId)
                 {
-                    await DoWork(state.JobId, state.ParentId, state.ScheduleId).ConfigureAwait(false);
+                    await _doWorkAsync((state.JobId, state.ParentId, state.ScheduleId)).ConfigureAwait(false);
                     _states.TryRemove(stateKey, state);
                 }
-            }, cancellationToken);
-        }
-
-        private static TimeSpan? GetDelay(DateTimeOffset triggerDateTime)
-        {
-            var delay = triggerDateTime - DateTimeOffset.UtcNow;
-            return (delay > TimeSpan.Zero) ? delay : (TimeSpan?)null;
-        }
-
-        public async Task DoWork(Guid jobId, Guid targetId, Guid scheduleId)
-        {
-            Log.Information("updating key:{@targetId} scheduleId:{@scheduleId}...", targetId.ToShort(), scheduleId.ToShort());
-            await Task.Delay(TimeSpan.FromSeconds(0.1)).ConfigureAwait(false);
-            Log.Information("updated key:{@targetId} scheduleId:{@scheduleId}...", targetId.ToShort(), scheduleId.ToShort());
-        }
-    }
-
-    // https://blogs.msdn.microsoft.com/pfxteam/2011/04/02/little-known-gems-atomic-conditional-removals-from-concurrentdictionary/
-    static class ConcurrentDictionaryExtensions
-    {
-        public static bool TryRemove<TKey, TValue>(
-            this ConcurrentDictionary<TKey, TValue> dictionary, TKey key, TValue previousValueToCompare)
-        {
-            var collection = (ICollection<KeyValuePair<TKey, TValue>>)dictionary;
-            var toRemove = new KeyValuePair<TKey, TValue>(key, previousValueToCompare);
-            return collection.Remove(toRemove);
+            }, cancellationToken).ContinueWithFaultHandler();
         }
     }
 }

@@ -5,9 +5,9 @@ using Serilog.Enrichers;
 
 namespace SchedulerPOC
 {
-    class Program
+    internal class Program
     {
-        static async Task Main(string[] args)
+        private static async Task Main()
         {
             Log.Logger = new LoggerConfiguration()
                 .Enrich.With(new ThreadIdEnricher())
@@ -15,7 +15,7 @@ namespace SchedulerPOC
                     outputTemplate: "{Timestamp:mm:ss.fff} [{Level}] ({ThreadId}) {Message}{NewLine}{Exception}")
                 .CreateLogger();
 
-            var samples = new IScheduler[] { new Sample3() };
+            var samples = new IScheduler[] { new Scheduler(args => DoWork(args.jobId, args.targetId, args.scheduleId)) };
 
             foreach (var sample in samples)
             {
@@ -24,6 +24,13 @@ namespace SchedulerPOC
                 await Task.Delay(TimeSpan.FromSeconds(1));
                 Console.WriteLine($"--- End: {sample.GetType().Name} ---");
             }
+        }
+
+        private static async Task DoWork(Guid jobId, Guid targetId, Guid scheduleId)
+        {
+            Log.Information("updating key:{@targetId} scheduleId:{@scheduleId}...", targetId.ToShort(), scheduleId.ToShort());
+            await Task.Delay(TimeSpan.FromSeconds(0.1)).ConfigureAwait(false);
+            Log.Information("updated key:{@targetId} scheduleId:{@scheduleId}...", targetId.ToShort(), scheduleId.ToShort());
         }
 
         private static async Task TriggerWork(IScheduler sample)

@@ -3,7 +3,7 @@ using System.Linq;
 
 namespace SchedulerPOC
 {
-    static class Extensions
+    internal static class Extensions
     {
         public static string ToShort(this Guid guid)
         {

@@ -4,7 +4,7 @@ using Newtonsoft.Json;
 
 namespace SchedulerPOC
 {
-    public class ChangeState
+    internal class ChangeState
     {
         public ChangeState(Guid jobId, Guid parentId, DateTimeOffset triggerDateTime, int observed, CancellationTokenSource cancellationTokenSourceOfPreviousRollup, Guid scheduleId)
         {
@@ -29,9 +29,9 @@ namespace SchedulerPOC
         public int Observed { get; private set; }
 
         [JsonIgnore]
-        public Guid ScheduleId { get; private set; }
+        public Guid ScheduleId { get; }
 
         [JsonIgnore]
-        public CancellationTokenSource CancellationTokenSourceOfPreviousRollup { get; private set; }
+        public CancellationTokenSource CancellationTokenSourceOfPreviousRollup { get; }
     }
 }
